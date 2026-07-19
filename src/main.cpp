@@ -24,7 +24,7 @@
 #define DIR_LEFT_FWD     1
 #define DIR_RIGHT_FWD    0
 
-#define MIN_PARAM        1         // schnellster Schritt (ca. 0.063 m/s)
+#define MIN_PARAM        3         // schnellster Schritt
 #define MAX_PARAM        200       // langsamste sinnvolle Fahrt
 // --------------------------------------
 
