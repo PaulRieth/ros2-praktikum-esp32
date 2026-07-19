@@ -5,10 +5,8 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 #include <geometry_msgs/msg/twist.h>
-#include <sensor_msgs/msg/range.h>
 
 #include <WiFi.h>
-#include "secrets.h"
 
 // --- Hardware-Parameter (gemessen) ---
 #define MOTOR_TX_PIN     17
@@ -31,9 +29,6 @@
 #define MODE_CONTINUOUS  1
 #define CMD_TIMEOUT_MS   500
 
-#define TRIG_PIN 26
-#define ECHO_PIN 25
-
 // v = (1000 / param) / STEPS_PER_REV * Radumfang
 // => param = 1000 * Radumfang / (STEPS_PER_REV * v)
 const float WHEEL_CIRC = WHEEL_DIAMETER * PI;
@@ -45,11 +40,6 @@ rclc_executor_t executor;
 rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_node_t node;
-
-
-rcl_publisher_t range_pub;
-sensor_msgs__msg__Range range_msg;
-rcl_timer_t range_timer;
 
 unsigned long last_cmd = 0;
 
@@ -88,46 +78,6 @@ void setWheel(uint8_t id, float speed, uint8_t dir_forward) {
   sendMotorCommand(id, MODE_CONTINUOUS, dir, (uint16_t)(p + 0.5f));
 }
 
-float singleMeasurement() {
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(5);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-
-  unsigned long dauer = pulseIn(ECHO_PIN, HIGH, 30000);
-  if (dauer == 0) return -1.0f;
-
-  return (dauer * 0.000343f) / 2.0f;
-}
-
-float measureDistance() {
-  float m[3];
-  for (int i = 0; i < 3; i++) {
-    m[i] = singleMeasurement();
-    delay(10);
-  }
-
-  // Median der drei Werte
-  if (m[0] > m[1]) { float t = m[0]; m[0] = m[1]; m[1] = t; }
-  if (m[1] > m[2]) { float t = m[1]; m[1] = m[2]; m[2] = t; }
-  if (m[0] > m[1]) { float t = m[0]; m[0] = m[1]; m[1] = t; }
-
-  return m[1];
-}
-
-void range_timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
-  RCLC_UNUSED(last_call_time);
-  if (timer == NULL) return;
-
-  float d = measureDistance();
-
-  // ungueltige Messung als "unendlich weit" melden
-  range_msg.range = (d < 0.0f) ? range_msg.max_range + 1.0f : d;
-
-  RCSOFTCHECK(rcl_publish(&range_pub, &range_msg, NULL));
-}
-
 void stopMotors() {
   sendMotorCommand(MOTOR_ID_LEFT,  MODE_CONTINUOUS, DIR_LEFT_FWD,  0);
   sendMotorCommand(MOTOR_ID_RIGHT, MODE_CONTINUOUS, DIR_RIGHT_FWD, 0);
@@ -150,9 +100,7 @@ void cmd_vel_callback(const void * msgin) {
 
 void setup() {
   Serial.begin(115200);
-
-  IPAddress agent_ip(AGENT_IP_0, AGENT_IP_1, AGENT_IP_2, AGENT_IP_3);
-  set_microros_wifi_transports(WIFI_SSID, WIFI_PASSWORD, agent_ip, AGENT_PORT);
+  set_microros_serial_transports(Serial);
 
   Serial2.begin(MOTOR_BAUD, SERIAL_8N1, -1, MOTOR_TX_PIN);
 
@@ -168,37 +116,15 @@ void setup() {
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
     "cmd_vel"));
 
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-
-  RCCHECK(rclc_publisher_init_default(
-    &range_pub,
-    &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Range),
-    "range"));
-
-  RCCHECK(rclc_timer_init_default(
-    &range_timer, &support, RCL_MS_TO_NS(100), range_timer_callback));
-
-  // Konstante Felder der Range-Nachricht
-  range_msg.radiation_type = sensor_msgs__msg__Range__ULTRASOUND;
-  range_msg.field_of_view = 0.26f;    // ca. 15 Grad
-  range_msg.min_range = 0.02f;
-  range_msg.max_range = 4.0f;
-  range_msg.header.frame_id.data = (char *)"ultrasonic";
-  range_msg.header.frame_id.size = 10;
-  range_msg.header.frame_id.capacity = 11;
-
-  RCCHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
+  RCCHECK(rclc_executor_init(&executor, &support.context, 1, &allocator));
   RCCHECK(rclc_executor_add_subscription(
     &executor, &subscriber, &msg, &cmd_vel_callback, ON_NEW_DATA));
-  RCCHECK(rclc_executor_add_timer(&executor, &range_timer));
 
   stopMotors();
   last_cmd = millis();
-  }
+}
 
-  void loop() {
+void loop() {
   RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100)));
 
   if (millis() - last_cmd > CMD_TIMEOUT_MS) {
@@ -207,4 +133,4 @@ void setup() {
   }
 
   delay(10);
-  }
+}

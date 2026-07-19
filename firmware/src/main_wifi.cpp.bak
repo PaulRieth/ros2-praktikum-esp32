@@ -88,32 +88,18 @@ void setWheel(uint8_t id, float speed, uint8_t dir_forward) {
   sendMotorCommand(id, MODE_CONTINUOUS, dir, (uint16_t)(p + 0.5f));
 }
 
-float singleMeasurement() {
+float measureDistance() {
   digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(5);
+  delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
+  // Timeout 30 ms entspricht gut 5 m
   unsigned long dauer = pulseIn(ECHO_PIN, HIGH, 30000);
-  if (dauer == 0) return -1.0f;
 
-  return (dauer * 0.000343f) / 2.0f;
-}
-
-float measureDistance() {
-  float m[3];
-  for (int i = 0; i < 3; i++) {
-    m[i] = singleMeasurement();
-    delay(10);
-  }
-
-  // Median der drei Werte
-  if (m[0] > m[1]) { float t = m[0]; m[0] = m[1]; m[1] = t; }
-  if (m[1] > m[2]) { float t = m[1]; m[1] = m[2]; m[2] = t; }
-  if (m[0] > m[1]) { float t = m[0]; m[0] = m[1]; m[1] = t; }
-
-  return m[1];
+  if (dauer == 0) return -1.0f;          // nichts empfangen
+  return (dauer * 0.000343f) / 2.0f;     // Sekunden -> m, Hin- und Rueckweg
 }
 
 void range_timer_callback(rcl_timer_t * timer, int64_t last_call_time) {

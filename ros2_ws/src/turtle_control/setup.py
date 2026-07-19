@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'square = turtle_control.square:main',
+            'safety = turtle_control.safety:main',
         ],
     },
 )
