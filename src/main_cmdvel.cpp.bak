@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include <Arduino.h>#include <Arduino.h>
 #include <micro_ros_platformio.h>
 
 #include <rcl/rcl.h>
@@ -10,31 +10,19 @@
 #error This example is only available for Arduino framework with serial transport.
 #endif
 
-// --- Hardware-Parameter (gemessen) ---
-#define MOTOR_TX_PIN     17
-#define MOTOR_BAUD       9600
-#define MOTOR_ID_LEFT    1
-#define MOTOR_ID_RIGHT   2
+// --- ANPASSEN: müssen experimentell bestimmt werden ---
+#define MOTOR_TX_PIN   17
+#define MOTOR_BAUD     9600
+#define MOTOR_ID_LEFT  0
+#define MOTOR_ID_RIGHT 1
+#define WHEEL_BASE     0.17f    // Radabstand in m, ausmessen
+#define MAX_SPEED_MS   0.15f    // schnellste Fahrt in m/s
+#define MAX_PARAM      1000     // param-Wert bei MAX_SPEED_MS
+#define INVERT_RIGHT   true     // gespiegelt eingebauter Motor
+// ------------------------------------------------------
 
-#define WHEEL_DIAMETER   0.041f    // m
-#define WHEEL_BASE       0.166f    // m, Mitte zu Mitte
-#define STEPS_PER_REV    2048.0f
-
-// Vorwaerts: linker Motor dir=1, rechter dir=0 (Motor gespiegelt verbaut)
-#define DIR_LEFT_FWD     1
-#define DIR_RIGHT_FWD    0
-
-#define MIN_PARAM        1         // schnellster Schritt (ca. 0.063 m/s)
-#define MAX_PARAM        200       // langsamste sinnvolle Fahrt
-// --------------------------------------
-
-#define MODE_CONTINUOUS  1
-#define CMD_TIMEOUT_MS   500
-
-// v = (1000 / param) / STEPS_PER_REV * Radumfang
-// => param = 1000 * Radumfang / (STEPS_PER_REV * v)
-const float WHEEL_CIRC = WHEEL_DIAMETER * PI;
-const float PARAM_CONST = 1000.0f * WHEEL_CIRC / STEPS_PER_REV;   // ca. 0.0629
+#define MODE_CONTINUOUS 1
+#define CMD_TIMEOUT_MS  500
 
 rcl_subscription_t subscriber;
 geometry_msgs__msg__Twist msg;
@@ -57,32 +45,26 @@ void sendMotorCommand(uint8_t id, uint8_t mode, uint8_t dir, uint16_t param) {
   Serial2.write(id);
   Serial2.write(mode);
   Serial2.write(dir);
-  Serial2.write((uint8_t)((param >> 8) & 0xFF));   // High Byte zuerst
-  Serial2.write((uint8_t)(param & 0xFF));
+  Serial2.write((uint8_t)(param & 0xFF));         // Low Byte
+  Serial2.write((uint8_t)((param >> 8) & 0xFF));  // High Byte
 }
 
-// Radgeschwindigkeit in m/s -> Motorbefehl
-void setWheel(uint8_t id, float speed, uint8_t dir_forward) {
+// Geschwindigkeit in m/s -> Richtung + param
+void setWheel(uint8_t id, float speed, bool invert) {
+  if (invert) speed = -speed;
+
+  uint8_t dir = (speed >= 0.0f) ? 0 : 1;
   float mag = fabsf(speed);
 
-  // langsamer als MAX_PARAM erlaubt -> stehenbleiben
-  if (mag < PARAM_CONST / MAX_PARAM) {
-    sendMotorCommand(id, MODE_CONTINUOUS, dir_forward, 0);
-    return;
-  }
+  if (mag > MAX_SPEED_MS) mag = MAX_SPEED_MS;
 
-  uint8_t dir = (speed >= 0.0f) ? dir_forward : (dir_forward ? 0 : 1);
-
-  float p = PARAM_CONST / mag;
-  if (p < MIN_PARAM) p = MIN_PARAM;
-  if (p > MAX_PARAM) p = MAX_PARAM;
-
-  sendMotorCommand(id, MODE_CONTINUOUS, dir, (uint16_t)(p + 0.5f));
+  uint16_t param = (uint16_t)((mag / MAX_SPEED_MS) * MAX_PARAM);
+  sendMotorCommand(id, MODE_CONTINUOUS, dir, param);
 }
 
 void stopMotors() {
-  sendMotorCommand(MOTOR_ID_LEFT,  MODE_CONTINUOUS, DIR_LEFT_FWD,  0);
-  sendMotorCommand(MOTOR_ID_RIGHT, MODE_CONTINUOUS, DIR_RIGHT_FWD, 0);
+  sendMotorCommand(MOTOR_ID_LEFT,  MODE_CONTINUOUS, 0, 0);
+  sendMotorCommand(MOTOR_ID_RIGHT, MODE_CONTINUOUS, 0, 0);
 }
 
 void cmd_vel_callback(const void * msgin) {
@@ -94,8 +76,8 @@ void cmd_vel_callback(const void * msgin) {
   float v_left  = v - w * (WHEEL_BASE / 2.0f);
   float v_right = v + w * (WHEEL_BASE / 2.0f);
 
-  setWheel(MOTOR_ID_LEFT,  v_left,  DIR_LEFT_FWD);
-  setWheel(MOTOR_ID_RIGHT, v_right, DIR_RIGHT_FWD);
+  setWheel(MOTOR_ID_LEFT,  v_left,  false);
+  setWheel(MOTOR_ID_RIGHT, v_right, INVERT_RIGHT);
 
   last_cmd = millis();
 }
@@ -129,6 +111,7 @@ void setup() {
 void loop() {
   RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100)));
 
+  // Watchdog: stoppen, wenn keine Befehle mehr kommen
   if (millis() - last_cmd > CMD_TIMEOUT_MS) {
     stopMotors();
     last_cmd = millis();
